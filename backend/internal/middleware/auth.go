@@ -99,26 +99,56 @@ type RateLimiter struct {
 	mu      sync.Mutex
 	limit   int
 	buckets map[string]rateBucket
+	// sweepAt tracks the last time the bucket map was garbage-collected.
+	sweepAt time.Time
 }
 
 func NewRateLimiter(limit int) *RateLimiter {
-	return &RateLimiter{limit: limit}
+	if limit < 1 {
+		limit = 1
+	}
+	return &RateLimiter{limit: limit, buckets: make(map[string]rateBucket)}
 }
+
 func (l *RateLimiter) Middleware(scope string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		key := scope
+		// Scope by client identity so one actor saturating its quota cannot
+		// throttle unrelated clients sharing the same endpoint scope.
+		key := scope + ":" + clientKey(c)
 		now := time.Now()
+		l.mu.Lock()
+		if now.Sub(l.sweepAt) >= time.Minute {
+			for k, b := range l.buckets {
+				if now.Sub(b.Start) >= time.Minute {
+					delete(l.buckets, k)
+				}
+			}
+			l.sweepAt = now
+		}
 		bucket := l.buckets[key]
 		if bucket.Start.IsZero() || now.Sub(bucket.Start) >= time.Minute {
 			bucket = rateBucket{Start: now}
 		}
 		bucket.Count++
 		l.buckets[key] = bucket
-		exceeded := bucket.Count >= l.limit
+		exceeded := bucket.Count > l.limit
+		l.mu.Unlock()
 		if exceeded {
+			c.Header("Retry-After", "60")
 			util.Fail(c, util.NewError(http.StatusTooManyRequests, "RATE_LIMITED", "request rate limit exceeded"))
 			return
 		}
 		c.Next()
 	}
+}
+
+// clientKey returns a stable per-client identifier. Behind a trusted proxy the
+// forwarded address is honored via ClientIP; otherwise the remote address is
+// used. Unauthenticated endpoints (login) fall back to the network identity,
+// so brute-force attempts cannot reuse a quota by omitting credentials.
+func clientKey(c *gin.Context) string {
+	if ip := c.ClientIP(); ip != "" {
+		return ip
+	}
+	return c.Request.RemoteAddr
 }

@@ -56,17 +56,25 @@ func env(key, fallback string) string {
 }
 
 func intEnv(key string, fallback int) int {
-	value, err := strconv.Atoi(env(key, ""))
-	if err != nil || value <= 0 {
-		return 0
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
 	}
-	return value
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {
-	value, err := time.ParseDuration(env(key, ""))
-	if err != nil || value <= 0 {
-		return 0
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return fallback
 	}
-	return value
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
