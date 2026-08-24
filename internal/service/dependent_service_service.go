@@ -94,6 +94,13 @@ func (s *DependentServiceService) Create(ctx context.Context, request dto.Create
 		return recordAudit(txCtx, s.audits, actor, requestID, "dependent_service", service.ID, "create", nil, service, "", "", nil, 0, "")
 	})
 	if err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return dto.DependentServiceResponse{}, util.WrapError(http.StatusConflict, util.CodeConflict, "service code already exists", err)
+		}
+		var apiErr *util.APIError
+		if errors.As(err, &apiErr) {
+			return dto.DependentServiceResponse{}, apiErr
+		}
 		return dto.DependentServiceResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to create dependent service", err)
 	}
 	return s.Get(ctx, service.ID)
@@ -101,6 +108,9 @@ func (s *DependentServiceService) Create(ctx context.Context, request dto.Create
 func (s *DependentServiceService) Get(ctx context.Context, id uint) (dto.DependentServiceResponse, error) {
 	service, err := s.services.GetByID(ctx, id, true)
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.DependentServiceResponse{}, util.NotFound("dependent service")
+		}
 		return dto.DependentServiceResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to load dependent service", err)
 	}
 	return dto.NewDependentServiceResponse(service, s.now()), nil
@@ -122,7 +132,10 @@ func (s *DependentServiceService) Update(ctx context.Context, id uint, request d
 	}
 	current, err := s.services.GetByID(ctx, id, false)
 	if err != nil {
-		return dto.DependentServiceResponse{}, err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.DependentServiceResponse{}, util.NotFound("dependent service")
+		}
+		return dto.DependentServiceResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to load dependent service", err)
 	}
 	if err := requireServiceOwnership(actor, current.OwnerTeam); err != nil {
 		return dto.DependentServiceResponse{}, err
@@ -163,6 +176,13 @@ func (s *DependentServiceService) Update(ctx context.Context, id uint, request d
 		return recordAudit(txCtx, s.audits, actor, requestID, "dependent_service", id, "update", current, after, "", "", nil, 0, "")
 	})
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.DependentServiceResponse{}, util.NotFound("dependent service")
+		}
+		var apiErr *util.APIError
+		if errors.As(err, &apiErr) {
+			return dto.DependentServiceResponse{}, apiErr
+		}
 		return dto.DependentServiceResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to update dependent service", err)
 	}
 	return s.Get(ctx, id)
@@ -170,7 +190,10 @@ func (s *DependentServiceService) Update(ctx context.Context, id uint, request d
 func (s *DependentServiceService) Deactivate(ctx context.Context, id uint, actor util.Actor, requestID string) (dto.DependentServiceResponse, error) {
 	current, err := s.services.GetByID(ctx, id, false)
 	if err != nil {
-		return dto.DependentServiceResponse{}, err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return dto.DependentServiceResponse{}, util.NotFound("dependent service")
+		}
+		return dto.DependentServiceResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to load dependent service", err)
 	}
 	if err := requireServiceOwnership(actor, current.OwnerTeam); err != nil {
 		return dto.DependentServiceResponse{}, err
@@ -191,7 +214,11 @@ func (s *DependentServiceService) Deactivate(ctx context.Context, id uint, actor
 		return recordAudit(txCtx, s.audits, actor, requestID, "dependent_service", id, "deactivate", current, after, "", "", nil, 0, "")
 	})
 	if err != nil {
-		return dto.DependentServiceResponse{}, err
+		var apiErr *util.APIError
+		if errors.As(err, &apiErr) {
+			return dto.DependentServiceResponse{}, apiErr
+		}
+		return dto.DependentServiceResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to deactivate dependent service", err)
 	}
 	return s.Get(ctx, id)
 }

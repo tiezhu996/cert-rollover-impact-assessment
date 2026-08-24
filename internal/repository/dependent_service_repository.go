@@ -25,7 +25,7 @@ func NewDependentServiceRepository(db *gorm.DB) DependentServiceRepository {
 }
 func (r *dependentServiceRepository) Create(ctx context.Context, service *model.DependentService) error {
 	if err := scopedDB(ctx, r.db).Create(service).Error; err != nil {
-		return fmt.Errorf("create dependent service: %v", err)
+		return fmt.Errorf("create dependent service: %w", err)
 	}
 	return nil
 }
@@ -36,7 +36,7 @@ func (r *dependentServiceRepository) GetByID(ctx context.Context, id uint, prelo
 		query = query.Preload("Chain").Preload("Chain.TrustAnchor")
 	}
 	if err := query.First(&service, id).Error; err != nil {
-		return model.DependentService{}, fmt.Errorf("find dependent service %d: %v", id, err)
+		return model.DependentService{}, fmt.Errorf("find dependent service %d: %w", id, err)
 	}
 	return service, nil
 }
