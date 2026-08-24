@@ -30,6 +30,9 @@ func (s *TrustAnchorService) Import(ctx context.Context, request dto.ImportTrust
 		return dto.TrustAnchorResponse{}, err
 	}
 	certificate, err := x509util.ParseCertificatePEM(request.CertificatePEM)
+	if err != nil {
+		return dto.TrustAnchorResponse{}, util.WrapError(http.StatusUnprocessableEntity, util.CodeValidation, "trust-anchor PEM is malformed", err)
+	}
 	now := s.now()
 	if err := x509util.ValidateTrustAnchor(certificate, now); err != nil {
 		return dto.TrustAnchorResponse{}, util.WrapError(http.StatusUnprocessableEntity, util.CodeValidation, "trust-anchor validation failed", err)

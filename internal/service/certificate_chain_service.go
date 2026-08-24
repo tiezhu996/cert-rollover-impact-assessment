@@ -38,8 +38,18 @@ func (s *CertificateChainService) Import(ctx context.Context, request dto.Import
 		return dto.CertificateChainResponse{}, util.WrapError(http.StatusInternalServerError, util.CodeInternal, "unable to load trust anchor", err)
 	}
 	bundle := strings.Join(request.CertificatesPEM, "\n")
-	evidence, refs, _ := x509util.ValidateChain(anchor.PemRedacted, bundle, s.now())
-	certificates, _ := x509util.ParseCertificateBundle(bundle)
+	now := s.now()
+	evidence, refs, err := x509util.ValidateChain(anchor.PemRedacted, bundle, now)
+	if err != nil {
+		return dto.CertificateChainResponse{}, util.WrapError(http.StatusUnprocessableEntity, util.CodeValidation, "certificate chain validation failed", err)
+	}
+	certificates, err := x509util.ParseCertificateBundle(bundle)
+	if err != nil {
+		return dto.CertificateChainResponse{}, util.WrapError(http.StatusUnprocessableEntity, util.CodeValidation, "certificate bundle is malformed", err)
+	}
+	if len(certificates) == 0 {
+		return dto.CertificateChainResponse{}, util.NewError(http.StatusUnprocessableEntity, util.CodeValidation, "certificate bundle is empty")
+	}
 	validFrom := anchor.NotBefore
 	validTo := anchor.NotAfter
 	for _, certificate := range certificates {
@@ -56,7 +66,6 @@ func (s *CertificateChainService) Import(ctx context.Context, request dto.Import
 	for _, ref := range refs {
 		fingerprints = append(fingerprints, ref.FingerprintSHA256)
 	}
-	now := s.now()
 	chain := model.CertificateChain{ChainCode: strings.TrimSpace(request.ChainCode), TrustAnchorID: anchor.ID, LeafSubject: certificates[0].Subject.String(), CertificateRefsJSON: refsJSON, ChainFingerprint: util.HashString(strings.Join(fingerprints, ":")), ValidFrom: validFrom.UTC(), ValidTo: validTo.UTC(), ValidationResult: evidenceJSON, ChainState: string(constants.ChainValidated), SourceChecksum: util.HashString(bundle), PublicChainPEM: bundle, CreatedAt: now, UpdatedAt: now}
 	err = s.transactions.WithinTransaction(ctx, func(txCtx context.Context) error {
 		if createErr := s.chains.Create(txCtx, &chain); createErr != nil {

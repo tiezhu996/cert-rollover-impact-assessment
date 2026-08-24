@@ -1,6 +1,7 @@
 package x509util
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -95,11 +96,17 @@ func Ref(certificate *x509.Certificate) CertificateRef {
 }
 
 func ValidateTrustAnchor(certificate *x509.Certificate, at time.Time) error {
+	if certificate == nil {
+		return fmt.Errorf("trust anchor certificate is missing")
+	}
 	if !certificate.IsCA || !certificate.BasicConstraintsValid {
 		return fmt.Errorf("trust anchor must be a CA certificate")
 	}
 	if certificate.KeyUsage&x509.KeyUsageCertSign == 0 {
 		return fmt.Errorf("trust anchor is missing certificate-signing key usage")
+	}
+	if !bytes.Equal(certificate.RawSubject, certificate.RawIssuer) {
+		return fmt.Errorf("trust anchor must be self-signed (subject must match issuer)")
 	}
 	if at.Before(certificate.NotBefore) || !at.Before(certificate.NotAfter) {
 		return fmt.Errorf("trust anchor is not valid at %s", at.UTC().Format(time.RFC3339))
@@ -128,7 +135,7 @@ func ValidateChain(anchorPEM, bundlePEM string, at time.Time) (ChainEvidence, []
 	}
 	chains, err := leaf.Verify(x509.VerifyOptions{Roots: roots, Intermediates: intermediates, CurrentTime: at, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}})
 	if err != nil {
-		return ChainEvidence{}, nil, nil
+		return ChainEvidence{Valid: false, VerifiedAt: at.UTC(), LeafSubject: leaf.Subject.String(), RootSubject: anchor.Subject.String(), Message: "certificate chain did not verify against trust anchor: " + err.Error()}, nil, fmt.Errorf("certificate chain did not verify against trust anchor: %w", err)
 	}
 	path := make([]string, 0, len(chains[0]))
 	for _, certificate := range chains[0] {
