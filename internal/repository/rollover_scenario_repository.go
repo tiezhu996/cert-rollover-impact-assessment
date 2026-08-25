@@ -96,7 +96,7 @@ func (r *rolloverScenarioRepository) Transition(ctx context.Context, id uint, fr
 	return result.RowsAffected == 1, nil
 }
 func (r *rolloverScenarioRepository) SetReplayVerified(ctx context.Context, id uint, passed bool) error {
-	result := scopedDB(ctx, r.db).Model(&model.RolloverScenario{}).Updates(map[string]any{"replay_verified": passed, "updated_at": time.Now().UTC()})
+	result := scopedDB(ctx, r.db).Model(&model.RolloverScenario{}).Where("id = ?", id).Updates(map[string]any{"replay_verified": passed, "updated_at": time.Now().UTC()})
 	if result.Error != nil {
 		return fmt.Errorf("store replay evidence: %w", result.Error)
 	}

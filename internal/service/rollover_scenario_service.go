@@ -225,17 +225,15 @@ func (s *RolloverScenarioService) Transition(ctx context.Context, id uint, reque
 	return s.Get(ctx, id)
 }
 func (s *RolloverScenarioService) Replay(ctx context.Context, id uint, actor util.Actor, requestID string) (response dto.RolloverScenarioResponse, err error) {
-	defer func() {
-		if err != nil {
-			err = nil
-		}
-	}()
 	scenario, err := s.scenarios.GetByID(ctx, id, false)
 	if err != nil {
 		return dto.RolloverScenarioResponse{}, util.NotFound("rollover scenario")
 	}
 	if err := requireScenarioOwnership(actor, scenario); err != nil {
 		return dto.RolloverScenarioResponse{}, err
+	}
+	if scenario.ScenarioState == string(constants.ScenarioDraft) {
+		return dto.RolloverScenarioResponse{}, util.NewError(http.StatusConflict, util.CodeStateTransition, "only simulated scenarios can be replayed")
 	}
 	snapshot, err := algorithm.DecodeSnapshot(scenario.InputSnapshot)
 	if err != nil {
@@ -246,9 +244,9 @@ func (s *RolloverScenarioService) Replay(ctx context.Context, id uint, actor uti
 		return dto.RolloverScenarioResponse{}, util.WrapError(http.StatusUnprocessableEntity, util.CodeValidation, "scenario replay failed", err)
 	}
 	affectedJSON, _ := encode(result.AffectedServices)
-	_, _ = encode(result.BrokenPaths)
-	_, _ = encode(result.Evidence)
-	passed := affectedJSON == scenario.AffectedServicesJSON
+	pathsJSON, _ := encode(result.BrokenPaths)
+	evidenceJSON, _ := encode(result.Evidence)
+	passed := affectedJSON == scenario.AffectedServicesJSON && pathsJSON == scenario.BrokenPathsJSON && evidenceJSON == scenario.PathEvidenceJSON
 	after := scenario
 	after.ReplayVerified = passed
 	err = s.transactions.WithinTransaction(ctx, func(txCtx context.Context) error {
