@@ -34,7 +34,7 @@ func decodeUintList(raw string) ([]uint, error) {
 	if err := json.Unmarshal([]byte(raw), &values); err != nil {
 		return nil, fmt.Errorf("decode identifier list: %w", err)
 	}
-	return values, nil
+	return algorithm.SortedUnique(values), nil
 }
 func uniqueIDs(values []uint) []uint {
 	seen := map[uint]bool{}

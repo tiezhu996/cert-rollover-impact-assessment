@@ -92,7 +92,14 @@ func NewSnapshot(config ScenarioConfig, anchors []AnchorSnapshot, chains []Chain
 	config.CandidateChainIDs = sortedUnique(config.CandidateChainIDs)
 	sort.Slice(anchors, func(i, j int) bool { return anchors[i].ID < anchors[j].ID })
 	sort.Slice(chains, func(i, j int) bool { return chains[i].ID < chains[j].ID })
-	return Snapshot{AlgorithmVersion: Version, Config: config, Anchors: anchors, Chains: chains, Services: services}
+	normalized := make([]ServiceSnapshot, len(services))
+	for i, service := range services {
+		service.TrustAnchorIDs = sortedUnique(service.TrustAnchorIDs)
+		service.DependencyIDs = sortedUnique(service.DependencyIDs)
+		normalized[i] = service
+	}
+	sort.Slice(normalized, func(i, j int) bool { return normalized[i].ID < normalized[j].ID })
+	return Snapshot{AlgorithmVersion: Version, Config: config, Anchors: anchors, Chains: chains, Services: normalized}
 }
 
 func (snapshot Snapshot) Canonical() (string, error) { return util.CanonicalJSON(snapshot) }
@@ -198,40 +205,61 @@ func evaluateDirect(service ServiceSnapshot, at time.Time, active map[uint]bool,
 	if !ok {
 		return ServiceEvidence{ServiceID: service.ID, ServiceCode: service.Code, Reason: "configured certificate chain is missing"}
 	}
-	ids := candidates
-	ids = sortedUnique(ids)
+	ids := sortedUnique(candidates)
+	considered := map[uint]bool{}
 	reasons := []string{}
 	for _, id := range ids {
-		chain, exists := chains[id]
-		if !exists || chain.LeafSubject != current.LeafSubject {
-			continue
+		considered[id] = true
+		if reachable, reason := chainReachable(service, at, active, chains[id], current); reachable {
+			return ServiceEvidence{ServiceID: service.ID, ServiceCode: service.Code, Reachable: true, SelectedChainID: id, SelectedAnchorID: chains[id].AnchorID, Reason: "certificate path is reachable"}
+		} else if reason != "" {
+			reasons = append(reasons, reason)
 		}
-		if chain.State == "revoked" || chain.State == "deprecated" {
-			reasons = append(reasons, chain.Code+" is not active")
-			continue
+	}
+	// A service whose own configured chain is not part of the rollover candidate set
+	// must still be considered on the merits of that configured chain: if it is active,
+	// within its validity window, and its anchor is available, the service is reachable
+	// regardless of the proposed rollover.
+	if !considered[service.ChainID] {
+		if reachable, reason := chainReachable(service, at, active, current, current); reachable {
+			return ServiceEvidence{ServiceID: service.ID, ServiceCode: service.Code, Reachable: true, SelectedChainID: service.ChainID, SelectedAnchorID: current.AnchorID, Reason: "configured certificate path is reachable"}
+		} else if reason != "" {
+			reasons = append(reasons, reason)
 		}
-		if at.Before(chain.ValidFrom) || !at.Before(chain.ValidTo) {
-			reasons = append(reasons, chain.Code+" is outside its validity window")
-			continue
-		}
-		if !chain.ValidationValid {
-			reasons = append(reasons, chain.Code+" did not pass offline signature validation")
-			continue
-		}
-		if !active[chain.AnchorID] {
-			reasons = append(reasons, chain.Code+" anchor is unavailable at this timepoint")
-			continue
-		}
-		if !contains(service.TrustAnchorIDs, chain.AnchorID) {
-			reasons = append(reasons, service.Code+" trust set does not include anchor "+fmt.Sprint(chain.AnchorID))
-			continue
-		}
-		return ServiceEvidence{ServiceID: service.ID, ServiceCode: service.Code, Reachable: true, SelectedChainID: id, SelectedAnchorID: chain.AnchorID, Reason: "certificate path is reachable"}
 	}
 	if len(reasons) == 0 {
 		reasons = append(reasons, "no candidate chain matches the configured leaf identity")
 	}
 	return ServiceEvidence{ServiceID: service.ID, ServiceCode: service.Code, Reason: strings.Join(reasons, "; ")}
+}
+
+// chainReachable reports whether the given chain is a usable trust path for the service at
+// the supplied timepoint. When the chain's leaf subject does not match the service's
+// configured leaf identity the chain is irrelevant and an empty reason is returned so it
+// does not clutter the failure explanation.
+func chainReachable(service ServiceSnapshot, at time.Time, active map[uint]bool, chain, current ChainSnapshot) (bool, string) {
+	if chain.ID == 0 {
+		return false, ""
+	}
+	if chain.LeafSubject != current.LeafSubject {
+		return false, ""
+	}
+	if chain.State == "revoked" || chain.State == "deprecated" {
+		return false, chain.Code + " is not active"
+	}
+	if at.Before(chain.ValidFrom) || !at.Before(chain.ValidTo) {
+		return false, chain.Code + " is outside its validity window"
+	}
+	if !chain.ValidationValid {
+		return false, chain.Code + " did not pass offline signature validation"
+	}
+	if !active[chain.AnchorID] {
+		return false, chain.Code + " anchor is unavailable at this timepoint"
+	}
+	if !contains(service.TrustAnchorIDs, chain.AnchorID) {
+		return false, service.Code + " trust set does not include anchor " + fmt.Sprint(chain.AnchorID)
+	}
+	return true, ""
 }
 
 func resolveService(id uint, direct map[uint]ServiceEvidence, services map[uint]ServiceSnapshot, visiting map[uint]bool, path []uint) (ServiceEvidence, []uint) {
@@ -265,7 +293,12 @@ func resolveService(id uint, direct map[uint]ServiceEvidence, services map[uint]
 func criticalTimes(config ScenarioConfig) []time.Time {
 	points := []time.Time{config.OverlapStart.Add(-time.Minute), config.OverlapStart, config.OverlapStart.Add(config.OverlapEnd.Sub(config.OverlapStart) / 2), config.OverlapEnd, config.OverlapEnd.Add(time.Minute), config.SimulationTime}
 	sort.Slice(points, func(i, j int) bool { return points[i].Before(points[j]) })
-	result := points
+	result := make([]time.Time, 0, len(points))
+	for _, at := range points {
+		if len(result) == 0 || !result[len(result)-1].Equal(at) {
+			result = append(result, at)
+		}
+	}
 	return result
 }
 func activeAnchors(config ScenarioConfig, at time.Time) map[uint]bool {
@@ -347,6 +380,12 @@ func sortedUnique(values []uint) []uint {
 	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
 	return result
 }
+
+// SortedUnique returns the supplied identifier list de-duplicated, with non-positive
+// values dropped, and sorted ascending. It is the canonical form for any persisted or
+// surfaced identifier list so that inputs that differ only by ordering or repetition
+// decode to identical results.
+func SortedUnique(values []uint) []uint { return sortedUnique(values) }
 func contains(values []uint, target uint) bool {
 	for _, value := range values {
 		if value == target {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"pki-certificate-rollover-impact/backend/internal/algorithm"
 	"pki-certificate-rollover-impact/backend/internal/model"
 )
 
@@ -65,7 +66,7 @@ func NewDependentServiceResponse(service model.DependentService, now time.Time) 
 	edges := []uint{}
 	_ = json.Unmarshal([]byte(service.ClientTrustRefsJSON), &trust)
 	_ = json.Unmarshal([]byte(service.DependencyEdgesJSON), &edges)
-	response := DependentServiceResponse{ID: service.ID, ServiceCode: service.ServiceCode, Name: service.Name, OwnerTeam: service.OwnerTeam, Environment: service.Environment, ChainID: service.ChainID, ClientTrustRefsJSON: trust, Protocol: service.Protocol, Criticality: service.Criticality, DependencyEdgesJSON: edges, ServiceState: service.ServiceState, CreatedAt: service.CreatedAt, UpdatedAt: service.UpdatedAt}
+	response := DependentServiceResponse{ID: service.ID, ServiceCode: service.ServiceCode, Name: service.Name, OwnerTeam: service.OwnerTeam, Environment: service.Environment, ChainID: service.ChainID, ClientTrustRefsJSON: algorithm.SortedUnique(trust), Protocol: service.Protocol, Criticality: service.Criticality, DependencyEdgesJSON: algorithm.SortedUnique(edges), ServiceState: service.ServiceState, CreatedAt: service.CreatedAt, UpdatedAt: service.UpdatedAt}
 	if service.Chain.ID != 0 {
 		chain := NewCertificateChainResponse(service.Chain, 0, now)
 		response.Chain = &chain
