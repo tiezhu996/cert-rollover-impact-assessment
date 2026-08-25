@@ -36,7 +36,7 @@ func main() {
 func healthzHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sqlDB, dbErr := db.DB()
-		if dbErr != nil || sqlDB.Ping() != nil {
+		if dbErr != nil || sqlDB.PingContext(c.Request.Context()) != nil {
 			util.Fail(c, util.NewError(http.StatusInternalServerError, util.CodeInternal, "database is unavailable"))
 			return
 		}
@@ -76,7 +76,7 @@ func run(logger *slog.Logger) error {
 	simulationLimiter := middleware.NewRateLimiter(cfg.SimulationLimitPerMinute)
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
-	engine.Use(middleware.RequestID(), middleware.Recovery(logger), middleware.ErrorHandler(logger))
+	engine.Use(middleware.Timeout(cfg.RequestTimeout), middleware.RequestID(), middleware.Recovery(logger), middleware.ErrorHandler(logger))
 	engine.GET("/healthz", healthzHandler(db))
 	v1 := engine.Group("/api/v1")
 	v1.POST("/auth/login", loginLimiter.Middleware("login"), auth.Login)

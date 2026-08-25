@@ -19,13 +19,18 @@ type transactionManager struct{ db *gorm.DB }
 
 func NewTransactionManager(db *gorm.DB) TransactionManager { return &transactionManager{db: db} }
 func (manager *transactionManager) WithinTransaction(ctx context.Context, work func(context.Context) error) error {
-	return manager.db.Transaction(func(tx *gorm.DB) error { return work(context.WithValue(ctx, transactionContextKey{}, tx)) })
+	// Bind the transaction to the request context so a client disconnect or
+	// per-request deadline cancels BEGIN/COMMIT and triggers gorm's auto-rollback
+	// instead of letting the unit of work run to completion on a detached context.
+	return manager.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { return work(context.WithValue(ctx, transactionContextKey{}, tx)) })
 }
 func scopedDB(ctx context.Context, db *gorm.DB) *gorm.DB {
 	if tx, ok := ctx.Value(transactionContextKey{}).(*gorm.DB); ok {
 		return tx.WithContext(ctx)
 	}
-	return db
+	// Propagate the request context (cancellation/deadline) to every non-tx query
+	// so reads and lists stop as soon as the caller gives up.
+	return db.WithContext(ctx)
 }
 
 type UserRepository interface {
@@ -36,7 +41,7 @@ type userRepository struct{ db *gorm.DB }
 func NewUserRepository(db *gorm.DB) UserRepository { return &userRepository{db: db} }
 func (r *userRepository) FindByUsername(ctx context.Context, username string) (model.User, error) {
 	var user model.User
-	if err := r.db.WithContext(context.Background()).Where("username = ?", username).First(&user).Error; err != nil {
+	if err := scopedDB(ctx, r.db).Where("username = ?", username).First(&user).Error; err != nil {
 		return model.User{}, fmt.Errorf("find user by username: %w", err)
 	}
 	return user, nil
@@ -61,7 +66,7 @@ func (r *auditRepository) Record(ctx context.Context, entry model.AuditLog) erro
 	return nil
 }
 func (r *auditRepository) List(ctx context.Context, query AuditQuery) ([]model.AuditLog, int64, error) {
-	base := r.db.Model(&model.AuditLog{})
+	base := scopedDB(ctx, r.db).Model(&model.AuditLog{})
 	if query.EntityType != "" {
 		base = base.Where("entity_type = ?", query.EntityType)
 	}
@@ -162,7 +167,7 @@ func (r *trustAnchorRepository) CountChains(ctx context.Context, id uint) (int64
 }
 func (r *trustAnchorRepository) GetByIDs(ctx context.Context, ids []uint) ([]model.TrustAnchor, error) {
 	var anchors []model.TrustAnchor
-	if err := r.db.Where("id IN ?", ids).Find(&anchors).Error; err != nil {
+	if err := scopedDB(ctx, r.db).Where("id IN ?", ids).Find(&anchors).Error; err != nil {
 		return nil, fmt.Errorf("find trust anchors: %w", err)
 	}
 	return anchors, nil

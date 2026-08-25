@@ -18,6 +18,7 @@ type Config struct {
 	CertificateLimitPerMinute int
 	SimulationLimitPerMinute  int
 	ShutdownTimeout           time.Duration
+	RequestTimeout            time.Duration
 }
 
 func Load() (Config, error) {
@@ -32,6 +33,7 @@ func Load() (Config, error) {
 		CertificateLimitPerMinute: intEnv("CERT_IMPORT_LIMIT_PER_MINUTE", 30),
 		SimulationLimitPerMinute:  intEnv("SIMULATION_LIMIT_PER_MINUTE", 60),
 		ShutdownTimeout:           durationEnv("SHUTDOWN_TIMEOUT", 10*time.Second),
+		RequestTimeout:            durationEnv("REQUEST_TIMEOUT", 30*time.Second),
 	}
 	if cfg.Port == "" {
 		return Config{}, fmt.Errorf("PORT must not be empty")

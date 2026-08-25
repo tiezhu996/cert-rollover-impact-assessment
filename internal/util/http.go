@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +24,7 @@ const (
 	CodeIdempotency      = "IDEMPOTENCY_CONFLICT"
 	CodeReviewerConflict = "REVIEWER_SEPARATION_REQUIRED"
 	CodeInternal         = "INTERNAL_ERROR"
+	CodeRequestTimeout   = "REQUEST_TIMEOUT"
 )
 
 type APIError struct {
@@ -62,6 +64,13 @@ func Fail(c *gin.Context, err error) {
 	apiErr := &APIError{}
 	if !errors.As(err, &apiErr) {
 		apiErr = WrapError(http.StatusInternalServerError, CodeInternal, "request could not be completed", err)
+	}
+	// A request whose context was cancelled (client disconnect) or exceeded its
+	// deadline (timeout) must surface as a client-gateway error rather than a
+	// generic 500, so operators can distinguish "request gave up" from "server
+	// broke". Keep the underlying cause for log correlation.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		apiErr = WrapError(http.StatusGatewayTimeout, CodeRequestTimeout, "request was cancelled or timed out", err)
 	}
 	c.Error(apiErr)
 	c.AbortWithStatusJSON(apiErr.Status, Envelope{Code: apiErr.Code, Message: apiErr.Message, RequestID: RequestID(c)})
